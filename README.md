@@ -14,8 +14,6 @@ perform design review. The pass to accept/reject the issues raised during
 design review was performed by DeepSeek, and a final pass to clean up compiler
 warnings was also done with DeepSeek.
 
-I'm not a hardware engineer and barely remember much from my undergrad days.
-But this compiles and simulates something.
 
 This is a design to minimize power usage and maximize hashrate, built around
 what is known of TSMC 3nm.
@@ -23,7 +21,9 @@ what is known of TSMC 3nm.
 It's inspired by my past tinkering with Litecoin mining using my very loud and
 power-hungry Antminer L3+.
 
-Use at your own risk.
+Use at your own risk. I'm not a hardware engineer and barely remember much from
+my undergrad days. But this compiles and simulates something. I'm really
+running mostly on vibes here.
 
 ## Dependencies
 
