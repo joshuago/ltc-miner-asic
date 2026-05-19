@@ -1,6 +1,23 @@
 # LTC-3N: Litecoin Miner ASIC for TSMC N3 (3nm)
 
-## Performance vs Antminer L3++
+## Performance vs Antminer L9
+
+### System-Level Comparison
+
+| Metric                | Antminer L9 (16Gh) | Antminer L9 (17Gh) | LTC-3N (this design) | Improvement vs L9 |
+|-----------------------|-------------------|--------------------|----------------------|--------------------|
+| Process               | ~6nm              | ~6nm               | TSMC N3 (3nm)        | ~2x shrink       |
+| Hashrate              | 16 GH/s           | 17 GH/s            | ~92.6-150 GH/s       | ~5.8-8.8x        |
+| Power                 | 3,360 W           | 3,570 W            | ~25 W                | ~134-143x less   |
+| Efficiency            | 210 J/GH          | 210 J/GH           | ~0.17-0.27 J/GH      | ~780-1,235x      |
+| ASIC Chips            | multi-chip        | multi-chip         | 1 chip               | —                 |
+| Cores per chip        | unknown           | unknown            | 4,096                | —                 |
+| Release               | May 2024          | May 2024           | 2025 (design)        | —                 |
+| Interface             | Ethernet          | Ethernet           | UART/SPI             | —                 |
+| Cooling               | Air (2 fans)      | Air (2 fans)       | Passive              | —                 |
+| Weight                | 13.5 kg           | 13.5 kg            | < 0.1 kg (chip only) | —                 |
+
+### Chip-Level Comparison vs Antminer L3++
 
 | Metric                | Antminer L3++   | LTC-3N (this design) | Improvement    |
 |-----------------------|-----------------|----------------------|----------------|
@@ -216,4 +233,8 @@ C++ test harnesses live in `sim/`. Verilator compiles the RTL to a C++ cycle-acc
 | Antminer L3++        | 28nm    | 580 MH/s  | 942 W   | 1,624 J/GH | 2017 |
 | Antminer L7 (9050M)  | 8nm     | 9.05 GH/s | 3,260 W | 360 J/GH   | 2021 |
 | Goldshell LT5 Pro    | 12nm    | 2.45 GH/s | 670 W   | 273 J/GH   | 2021 |
+| Antminer L9 (16Gh)   | ~6nm    | 16 GH/s   | 3,360 W | 210 J/GH   | 2024 |
+| Antminer L9 (17Gh)   | ~6nm    | 17 GH/s   | 3,570 W | 210 J/GH   | 2024 |
 | **LTC-3N (this)**    | 3nm     | ~150 GH/s | ~25 W   | ~0.17 J/GH | 2025 |
+
+The Antminer L9 is Bitmain's current flagship Scrypt miner, released in May 2024. It improves L7 efficiency by ~42% (210 vs 360 J/GH) through a process shrink from 8nm to ~6nm and increased chip count. However, it still uses a multi-chip architecture on a trailing-edge node, leaving substantial room for the fully-integrated LTC-3N approach at 3nm.
