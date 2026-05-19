@@ -95,8 +95,16 @@ module scrypt_core (
     localparam [255:0] IPAD_256 = {32{8'h36}};
     localparam [255:0] OPAD_256 = {32{8'h5c}};
 
-    wire hash_below_target;
-    assign hash_below_target = (sha_hash < target_reg);
+    // Litecoin (and Bitcoin) interpret the 32-byte hash and target as
+    // 256-bit little-endian integers when checking hash < target. The chip's
+    // `sha_hash` is produced by SHA-256 with byte 0 at bit [255:248], i.e.
+    // big-endian. Byte-reverse both operands before comparing so the result
+    // matches the protocol convention. With this fix the host can send
+    // `target` in its natural byte order (byte 0 of the target at
+    // target[255:248]) instead of having to pre-swap it.
+    wire [255:0] hash_le   = {<<8{sha_hash}};
+    wire [255:0] target_le = {<<8{target_reg}};
+    wire hash_below_target = (hash_le < target_le);
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -135,7 +143,11 @@ module scrypt_core (
 
                 FSM_IDLE: begin
                     nonces_done <= nonce_done_cnt;
-                    if (job_valid) begin
+                    // Reject zero-range jobs. FSM_NEXT checks
+                    // `nonce_left == 1` for completion, which would never
+                    // fire after a 0 -> 0xFFFF underflow and would cause
+                    // the core to mine 65,536 nonces for a 0-range job.
+                    if (job_valid && nonce_range != 16'd0) begin
                         header_reg     <= header;
                         target_reg     <= target;
                         nonce_cur      <= nonce_base;

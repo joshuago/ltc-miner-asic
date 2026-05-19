@@ -115,20 +115,34 @@ module scrypt_top (
     //   Byte 38:     checksum
 
     logic        new_job;
-    logic [639:0] job_header;
-    logic [255:0] job_target;
+    logic [639:0] header_sys;
+    logic [255:0] target_sys;
     logic [7:0]  parser_state;
     logic [10:0] byte_cnt;
     logic [7:0]  packet_buf [0:113];
     logic [7:0]  packet_cksum;
 
+    // Parser FSM, sys_clk domain.
+    //
+    // CDC discipline:
+    //   1. State 2 (last byte of payload): if checksum passes, write
+    //      header_sys/target_sys directly from packet_buf and advance to
+    //      state 3. new_job stays low.
+    //   2. State 3: header_sys/target_sys have now been stable for one
+    //      sys_clk cycle. Pulse new_job high for one sys_clk cycle.
+    //   3. The core_clk side runs a 2-FF synchroniser on new_job and
+    //      samples header_sys/target_sys into core_clk registers on the
+    //      synchronised rising edge. Because header_sys was already stable
+    //      one sys_clk cycle before new_job rose, it has been stable for
+    //      ~1 sys_clk + a few core_clk cycles by the time the sample
+    //      happens -- well above any FF setup time.
     always_ff @(posedge sys_clk or negedge sys_rst_n) begin
         if (!sys_rst_n) begin
             parser_state <= '0;
             byte_cnt     <= '0;
             new_job      <= 1'b0;
-            job_header   <= '0;
-            job_target   <= '0;
+            header_sys   <= '0;
+            target_sys   <= '0;
             packet_cksum <= '0;
         end else begin
             new_job <= 1'b0;
@@ -156,20 +170,33 @@ module scrypt_top (
                         packet_buf[byte_cnt] <= uart_rx_data;
                         packet_cksum <= packet_cksum ^ uart_rx_data;
                         if (byte_cnt == 113) begin
-                            // Verify checksum
-                            if (packet_cksum ^ uart_rx_data == 8'h00) begin
-                                // Assemble header and target
+                            // Verify checksum. Parenthesise the XOR explicitly:
+                            // SystemVerilog `==` binds tighter than binary `^`,
+                            // so without the parens this would parse as
+                            // `packet_cksum ^ (uart_rx_data == 8'h00)` and
+                            // accept/reject the wrong packets.
+                            if ((packet_cksum ^ uart_rx_data) == 8'h00) begin
+                                // Write header/target directly. new_job is
+                                // NOT asserted here; we delay one cycle so
+                                // header_sys/target_sys are stable before
+                                // the sync'd rising edge reaches core_clk.
                                 for (int i = 0; i < 80; i++)
-                                    job_header[(79-i)*8 +: 8] <= packet_buf[1 + i];
+                                    header_sys[(79-i)*8 +: 8] <= packet_buf[1 + i];
                                 for (int i = 0; i < 32; i++)
-                                    job_target[(31-i)*8 +: 8] <= packet_buf[81 + i];
-                                new_job <= 1'b1;
+                                    target_sys[(31-i)*8 +: 8] <= packet_buf[81 + i];
+                                parser_state <= 3;
+                            end else begin
+                                parser_state <= 0;
                             end
-                            parser_state <= 0;
                         end else begin
                             byte_cnt <= byte_cnt + 11'd1;
                         end
                     end
+                end
+
+                3: begin  // header_sys/target_sys stable for one sys_clk
+                    new_job      <= 1'b1;
+                    parser_state <= 0;
                 end
 
                 default: parser_state <= 0;
@@ -179,29 +206,37 @@ module scrypt_top (
 
     // ─── Job Synchronization (sys_clk → core_clk) ───
 
-    logic        new_job_core;
+    logic         new_job_core;
     logic [639:0] header_core;
     logic [255:0] target_core;
 
-    // CDC: sys_clk domain → core_clk domain
-    // Simple 2-FF synchronizer for single-bit, gray-coded approach for multi-bit
-    // For header/target: use dual-clock FIFO or synchronized handshake
+    logic         new_job_sync1, new_job_sync2;
+    logic         new_job_pulse;
 
-    logic        new_job_sync1, new_job_sync2;
-    logic        new_job_pulse;
-
-    always_ff @(posedge core_clk) begin
-        new_job_sync1 <= new_job;
-        new_job_sync2 <= new_job_sync1;
-        new_job_pulse <= new_job_sync1 && !new_job_sync2;
+    always_ff @(posedge core_clk or negedge core_rst_n) begin
+        if (!core_rst_n) begin
+            new_job_sync1 <= 1'b0;
+            new_job_sync2 <= 1'b0;
+            new_job_pulse <= 1'b0;
+        end else begin
+            new_job_sync1 <= new_job;
+            new_job_sync2 <= new_job_sync1;
+            new_job_pulse <= new_job_sync1 && !new_job_sync2;
+        end
     end
 
-    // Register header/target on new_job assertion in sys_clk domain,
-    // then use them after the pulse is detected in core_clk domain
-    always_ff @(posedge sys_clk) begin
-        if (new_job) begin
-            header_core <= job_header;
-            target_core <= job_target;
+    // Sample header_sys/target_sys into core_clk registers when the
+    // synchroniser fires. The sys_clk parser FSM guarantees these signals
+    // are stable for >= 1 sys_clk cycle before new_job rises, so by the
+    // time the synchroniser asserts new_job_pulse they have been stable
+    // for many core_clk cycles.
+    always_ff @(posedge core_clk or negedge core_rst_n) begin
+        if (!core_rst_n) begin
+            header_core <= '0;
+            target_core <= '0;
+        end else if (new_job_pulse) begin
+            header_core <= header_sys;
+            target_core <= target_sys;
         end
     end
 
@@ -230,25 +265,26 @@ module scrypt_top (
         .NONCES_PER_CORE(NONCES_PER_CORE),
         .CORE_ID_W(CORE_ID_W)
     ) u_nonce_mgr (
-        .clk            (core_clk),
-        .rst_n          (core_rst_n),
-        .new_job        (new_job_core),
-        .header         (header_core),
-        .target         (target_core),
-        .job_valid      (nm_job_valid),
-        .job_core_id    (nm_core_id),
-        .job_header     (nm_header),
-        .job_target     (nm_target),
-        .job_nonce_base (nm_nonce_base),
-        .core_idle      (core_idle),
-        .core_found     (core_found),
+        .clk              (core_clk),
+        .rst_n            (core_rst_n),
+        .new_job          (new_job_core),
+        .header           (header_core),
+        .target           (target_core),
+        .job_valid        (nm_job_valid),
+        .job_core_id      (nm_core_id),
+        .job_header       (nm_header),
+        .job_target       (nm_target),
+        .job_nonce_base   (nm_nonce_base),
+        .core_idle        (core_idle),
+        .core_found       (core_found),
         .core_found_nonce (core_found_nonce),
         .core_found_hash  (core_found_hash),
-        .result_valid   (nm_result_valid),
-        .result_nonce   (nm_result_nonce),
-        .result_hash    (nm_result_hash),
-        .total_hashes   (),
-        .shares_found   ()
+        .result_fifo_full (result_cdc_full),
+        .result_valid     (nm_result_valid),
+        .result_nonce     (nm_result_nonce),
+        .result_hash      (nm_result_hash),
+        .total_hashes     (),
+        .shares_found     ()
     );
 
     // ─── Scrypt Core Instances ───
@@ -312,14 +348,19 @@ module scrypt_top (
     logic [287:0] result_cdc_wdata, result_cdc_rdata;  // {hash[255:0], nonce[31:0]}
     logic        result_cdc_empty, result_cdc_full;
 
-    // Simple sync FIFO (2-port, async clocks)
+    // Simple sync FIFO (2-port, async clocks).
+    //
+    // Belt-and-braces: the nonce_manager already gates `nm_result_valid`
+    // on !result_cdc_full, but we AND it again here so that even if the
+    // back-pressure path inside nonce_manager regressed in the future, a
+    // full FIFO can never accept a write (and silently drop a share).
     sync_fifo #(
         .DWIDTH(288),
         .DEPTH (16)
     ) u_result_fifo (
         .wr_clk   (core_clk),
         .wr_rst_n (core_rst_n),
-        .wr_en    (nm_result_valid),
+        .wr_en    (nm_result_valid && !result_cdc_full),
         .wr_data  ({nm_result_hash, nm_result_nonce}),
         .full     (result_cdc_full),
 
@@ -341,13 +382,22 @@ module scrypt_top (
         TX_CHECKSUM
     } tx_state_t;
 
-    tx_state_t tx_state;
+    tx_state_t  tx_state;
     logic [5:0] tx_byte_cnt;
+    logic [7:0] tx_cksum;        // Running XOR checksum across the response packet.
+
+    // Response framing (sent on each share found):
+    //   Byte 0:     0x5A           (magic)
+    //   Byte 1:     0x01           (cmd: found share)
+    //   Bytes 2-33: hash (32 bytes, byte 0 first)
+    //   Bytes 34-37: nonce (4 bytes, little-endian: LSB first)
+    //   Byte 38:    XOR checksum of bytes 0..37
 
     always_ff @(posedge sys_clk or negedge sys_rst_n) begin
         if (!sys_rst_n) begin
-            tx_state     <= TX_IDLE;
-            tx_byte_cnt  <= '0;
+            tx_state      <= TX_IDLE;
+            tx_byte_cnt   <= '0;
+            tx_cksum      <= '0;
             uart_tx_valid <= 1'b0;
             uart_tx_data  <= '0;
         end else begin
@@ -358,36 +408,57 @@ module scrypt_top (
                     if (!result_cdc_empty && uart_tx_ready) begin
                         tx_state    <= TX_PREAMBLE;
                         tx_byte_cnt <= 6'd1;
+                        tx_cksum    <= 8'h00;
                     end
                 end
 
                 TX_PREAMBLE: begin
                     if (uart_tx_ready) begin
-                        uart_tx_valid <= 1'b1;
+                        // Only assert tx_valid in the branches that actually
+                        // produce a byte; the transition branch leaves
+                        // uart_tx_valid at its default of 0 so the UART
+                        // does not see a phantom byte (issue #30).
                         case (tx_byte_cnt)
-                            6'd1: uart_tx_data <= 8'h5A;     // magic
-                            6'd2: uart_tx_data <= 8'h01;     // cmd: found share
+                            6'd1: begin
+                                uart_tx_valid <= 1'b1;
+                                uart_tx_data  <= 8'h5A;
+                                tx_cksum      <= tx_cksum ^ 8'h5A;
+                                tx_byte_cnt   <= 6'd2;
+                            end
+                            6'd2: begin
+                                uart_tx_valid <= 1'b1;
+                                uart_tx_data  <= 8'h01;
+                                tx_cksum      <= tx_cksum ^ 8'h01;
+                                tx_byte_cnt   <= 6'd3;
+                            end
                             default: begin
                                 tx_state    <= TX_PAYLOAD;
                                 tx_byte_cnt <= 6'd0;
                             end
                         endcase
-                        if (tx_byte_cnt < 6'd3)
-                            tx_byte_cnt <= tx_byte_cnt + 6'd1;
                     end
                 end
 
                 TX_PAYLOAD: begin
                     if (uart_tx_ready) begin
-                        uart_tx_valid <= 1'b1;
-                        // Send hash (32 bytes) + nonce (4 bytes) = 36 bytes
+                        // Hash bytes 0..31: result_cdc_rdata holds
+                        // {hash[255:0], nonce[31:0]}, so byte 0 of the hash
+                        // (= hash[255:248]) is at result_cdc_rdata[287:280].
+                        // Indexing from bit 287 walks down through the hash.
                         if (tx_byte_cnt < 32) begin
-                            uart_tx_data <= result_cdc_rdata[255 - tx_byte_cnt*8 -: 8];
-                            tx_byte_cnt  <= tx_byte_cnt + 6'd1;
+                            uart_tx_valid <= 1'b1;
+                            uart_tx_data  <= result_cdc_rdata[287 - tx_byte_cnt*8 -: 8];
+                            tx_cksum      <= tx_cksum ^ result_cdc_rdata[287 - tx_byte_cnt*8 -: 8];
+                            tx_byte_cnt   <= tx_byte_cnt + 6'd1;
+                        // Nonce bytes (LE): byte 0 = nonce[7:0] = result_cdc_rdata[7:0],
+                        // byte 3 = nonce[31:24] = result_cdc_rdata[31:24].
                         end else if (tx_byte_cnt < 36) begin
-                            uart_tx_data <= result_cdc_rdata[287 - (tx_byte_cnt-32)*8 -: 8];
-                            tx_byte_cnt  <= tx_byte_cnt + 6'd1;
+                            uart_tx_valid <= 1'b1;
+                            uart_tx_data  <= result_cdc_rdata[(tx_byte_cnt-32)*8 +: 8];
+                            tx_cksum      <= tx_cksum ^ result_cdc_rdata[(tx_byte_cnt-32)*8 +: 8];
+                            tx_byte_cnt   <= tx_byte_cnt + 6'd1;
                         end else begin
+                            // Transition only; no byte to send this cycle.
                             tx_state    <= TX_CHECKSUM;
                             tx_byte_cnt <= 6'd0;
                         end
@@ -397,10 +468,12 @@ module scrypt_top (
                 TX_CHECKSUM: begin
                     if (uart_tx_ready) begin
                         uart_tx_valid <= 1'b1;
-                        uart_tx_data  <= tx_byte_cnt; // placeholder cksum
+                        uart_tx_data  <= tx_cksum;
                         tx_state      <= TX_IDLE;
                     end
                 end
+
+                default: tx_state <= TX_IDLE;
             endcase
         end
     end

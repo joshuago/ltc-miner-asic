@@ -44,6 +44,7 @@ help:
 	@echo "  make lint-scrypt-core - Lint scrypt_core only"
 	@echo "  make sim-salsa20      - Build + run salsa20_8 simulation"
 	@echo "  make sim-scrypt-core  - Build + run scrypt_core simulation (~54K cycles per hash)"
+	@echo "  make sim-uart         - Build + run UART loopback simulation"
 	@echo "  make trace-salsa20    - Build + run salsa20 with VCD waveform output"
 	@echo "  make clean            - Remove obj_dir and .vcd files"
 	@echo ""
@@ -88,6 +89,14 @@ sim-top:
 		--exe sim/sim_main_scrypt_top.cpp \
 		-o sim_top
 	./obj_dir/sim_top
+
+sim-uart:
+	$(VERILATOR) --cc --build -j --top-module uart \
+		$(VERILATOR_FLAGS) \
+		rtl/uart.sv \
+		--exe sim/sim_main_uart.cpp \
+		-o sim_uart
+	./obj_dir/sim_uart
 
 # ─── Trace (VCD waveform) targets ───
 .PHONY: trace-salsa20
