@@ -43,7 +43,7 @@ help:
 	@echo "  make lint-salsa20     - Lint salsa20_8 only"
 	@echo "  make lint-scrypt-core - Lint scrypt_core only"
 	@echo "  make sim-salsa20      - Build + run salsa20_8 simulation"
-	@echo "  make sim-scrypt-core  - Build + run scrypt_core simulation (NOTE: hangs due to known FSM bugs)"
+	@echo "  make sim-scrypt-core  - Build + run scrypt_core simulation (~54K cycles per hash)"
 	@echo "  make trace-salsa20    - Build + run salsa20 with VCD waveform output"
 	@echo "  make clean            - Remove obj_dir and .vcd files"
 	@echo ""

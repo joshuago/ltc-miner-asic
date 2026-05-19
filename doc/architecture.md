@@ -2,44 +2,62 @@
 
 ## Performance vs Antminer L9
 
+The numbers below are derived from the per-core cycle count produced
+by Verilator simulation. The microarchitecture (a single Salsa20
+pipeline per core, sequential BlockMix calls, single-port scratchpad,
+serialized SHA-256 blocks) yields roughly 53,100 cycles per scrypt
+hash, which at 1.2 GHz is 22.6 KH/s per core and 92.6 MH/s across
+4,096 cores. This is substantially **slower** than the multi-chip
+Antminer L9; the design's potential advantage is in J/GH, not absolute
+GH/s, and even that advantage depends on the power estimate below
+being achievable (see design-review-notes #20).
+
 ### System-Level Comparison
 
-| Metric                | Antminer L9 (16Gh) | Antminer L9 (17Gh) | LTC-3N (this design) | Improvement vs L9 |
-|-----------------------|-------------------|--------------------|----------------------|--------------------|
-| Process               | ~6nm              | ~6nm               | TSMC N3 (3nm)        | ~2x shrink       |
-| Hashrate              | 16 GH/s           | 17 GH/s            | ~92.6-150 GH/s       | ~5.8-8.8x        |
-| Power                 | 3,360 W           | 3,570 W            | ~25 W                | ~134-143x less   |
-| Efficiency            | 210 J/GH          | 210 J/GH           | ~0.17-0.27 J/GH      | ~780-1,235x      |
-| ASIC Chips            | multi-chip        | multi-chip         | 1 chip               | —                 |
-| Cores per chip        | unknown           | unknown            | 4,096                | —                 |
-| Release               | May 2024          | May 2024           | 2025 (design)        | —                 |
-| Interface             | Ethernet          | Ethernet           | UART/SPI             | —                 |
-| Cooling               | Air (2 fans)      | Air (2 fans)       | Passive              | —                 |
-| Weight                | 13.5 kg           | 13.5 kg            | < 0.1 kg (chip only) | —                 |
+| Metric         | Antminer L9 (16Gh) | LTC-3N (this design)         | Ratio          |
+|----------------|--------------------|------------------------------|----------------|
+| Process        | ~6nm               | TSMC N3 (3nm)                | ~2x shrink     |
+| Hashrate       | 16 GH/s            | ~92.6 MH/s                   | ~173x slower   |
+| Power (target) | 3,360 W            | ~25 W (estimate, optimistic) | ~134x less     |
+| Efficiency     | 210 J/GH           | ~270 J/GH (at 25 W)          | ~1.3x worse    |
+| ASIC Chips     | multi-chip         | 1 chip                       | --             |
+| Cores per chip | unknown            | 4,096                        | --             |
+| Release        | May 2024           | 2025 (paper design)          | --             |
+| Interface      | Ethernet           | UART (broken; see review)    | --             |
+| Cooling        | Air (2 fans)       | Passive (claimed)            | --             |
 
 ### Chip-Level Comparison vs Antminer L3++
 
-| Metric                | Antminer L3++   | LTC-3N (this design) | Improvement    |
-|-----------------------|-----------------|----------------------|----------------|
-| Process               | 28nm            | TSMC N3 (3nm)        | 9.3x shrink   |
-| Hashrate              | 580 MH/s        | ~150-400 GH/s        | ~260-690x     |
-| ASIC Chips            | 288             | 1 chip               | —              |
-| Cores per chip        | ~12-16          | 4,096                | ~273x          |
-| Per-Core Hashrate     | ~1.5 MH/s       | ~36-97 KH/s          | 0.024x         |
-| Core Clock            | ~400 MHz        | 1.2 GHz              | 3x             |
-| Per-Core SRAM         | ~128 KB         | 128 KB               | same           |
-| Total On-Chip SRAM    | —               | 512 MB               | —              |
-| Die Size (est)        | ~7mm²/chip      | ~420 mm²             | —              |
-| Chip Power (est)      | 942W            | ~23W                 | ~40x less      |
-| Efficiency (est)      | 1,624 J/GH      | ~0.1-0.15 J/GH       | ~12,000x       |
+| Metric             | Antminer L3++ | LTC-3N (this design) | Ratio        |
+|--------------------|---------------|----------------------|--------------|
+| Process            | 28nm          | TSMC N3 (3nm)        | 9.3x shrink  |
+| Hashrate (chip)    | ~2.0 MH/s     | ~92.6 MH/s           | ~46x         |
+| Hashrate (system)  | 580 MH/s      | ~92.6 MH/s           | ~6x slower   |
+| ASIC Chips         | 288           | 1 chip               | --           |
+| Cores per chip     | ~12-16        | 4,096                | ~273x        |
+| Per-Core Hashrate  | ~140 KH/s     | ~22.6 KH/s           | ~6x slower   |
+| Core Clock         | ~400 MHz      | 1.2 GHz              | 3x           |
+| Per-Core SRAM      | ~128 KB       | 128 KB               | same         |
+| Total On-Chip SRAM | --            | 512 MB (implausible) | --           |
+| Die Size (est)     | ~7mm^2/chip   | ~420 mm^2            | --           |
+| Chip Power (est)   | ~3.3 W/chip   | ~25 W (optimistic)   | ~8x more     |
+| Efficiency (est)   | 1,624 J/GH    | ~270 J/GH (at 25 W)  | ~6x better   |
+
+Per-core hashrate is **lower** than the L3++ because each LTC-3N core
+runs ROMix sequentially (one BlockMix at a time, one Salsa20 pipeline,
+single-port scratchpad). The L3++ achieves higher per-core throughput
+by parallelising more within each core.
 
 ### Hashrate Breakdown by Clock
 
-| Clock    | Cycles/Hash | Per-Core KH/s | 4096-Core GH/s |
+| Clock    | Cycles/Hash | Per-Core KH/s | 4096-Core MH/s |
 |----------|-------------|---------------|----------------|
-| 800 MHz  | ~53,100     | 15.1          | 61.7           |
-| 1.0 GHz  | ~53,100     | 18.8          | 77.1           |
+| 800 MHz  | ~53,100     | 15.1          | 61.8           |
+| 1.0 GHz  | ~53,100     | 18.8          | 77.0           |
 | 1.2 GHz  | ~53,100     | 22.6          | 92.6           |
+
+Aggregate = per-core KH/s x 4096 cores / 1000 = MH/s. (Per-core KH/s
+x 4096 = ~92,569 KH/s = ~92.6 MH/s, not GH/s.)
 
 Cycles/hash measured via Verilator simulation (ROMix dominates at ~41K cycles).
 
@@ -228,13 +246,20 @@ C++ test harnesses live in `sim/`. Verilator compiles the RTL to a C++ cycle-acc
 
 ## Comparison with State-of-the-Art
 
-| Miner                | Process | Hashrate  | Power   | Efficiency | Year |
-|----------------------|---------|-----------|---------|------------|------|
-| Antminer L3++        | 28nm    | 580 MH/s  | 942 W   | 1,624 J/GH | 2017 |
-| Antminer L7 (9050M)  | 8nm     | 9.05 GH/s | 3,260 W | 360 J/GH   | 2021 |
-| Goldshell LT5 Pro    | 12nm    | 2.45 GH/s | 670 W   | 273 J/GH   | 2021 |
-| Antminer L9 (16Gh)   | ~6nm    | 16 GH/s   | 3,360 W | 210 J/GH   | 2024 |
-| Antminer L9 (17Gh)   | ~6nm    | 17 GH/s   | 3,570 W | 210 J/GH   | 2024 |
-| **LTC-3N (this)**    | 3nm     | ~150 GH/s | ~25 W   | ~0.17 J/GH | 2025 |
+| Miner                | Process | Hashrate    | Power   | Efficiency       | Year |
+|----------------------|---------|-------------|---------|------------------|------|
+| Antminer L3++        | 28nm    | 580 MH/s    | 942 W   | 1,624 J/GH       | 2017 |
+| Antminer L7 (9050M)  | 8nm     | 9.05 GH/s   | 3,260 W | 360 J/GH         | 2021 |
+| Goldshell LT5 Pro    | 12nm    | 2.45 GH/s   | 670 W   | 273 J/GH         | 2021 |
+| Antminer L9 (16Gh)   | ~6nm    | 16 GH/s     | 3,360 W | 210 J/GH         | 2024 |
+| Antminer L9 (17Gh)   | ~6nm    | 17 GH/s     | 3,570 W | 210 J/GH         | 2024 |
+| **LTC-3N (this)**    | 3nm     | ~92.6 MH/s  | ~25 W   | ~270 J/GH (best) | 2025 |
 
-The Antminer L9 is Bitmain's current flagship Scrypt miner, released in May 2024. It improves L7 efficiency by ~42% (210 vs 360 J/GH) through a process shrink from 8nm to ~6nm and increased chip count. However, it still uses a multi-chip architecture on a trailing-edge node, leaving substantial room for the fully-integrated LTC-3N approach at 3nm.
+The LTC-3N hashrate figure is the simulation cycle count divided into
+core_clk; it does **not** make the chip a competitor to the Antminer
+L9. In absolute throughput the design is comparable to a single
+Antminer L3++ chip and roughly 1/170 of an L9. The only metric on
+which it might be competitive is energy efficiency, and that depends
+on the 25 W power estimate -- which design-review-notes #20 calls out
+as likely 4-10x too low. If actual power is 100-300 W, the chip is
+worse than the L7 on J/GH and probably worse than the L3++.

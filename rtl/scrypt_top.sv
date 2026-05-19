@@ -49,8 +49,8 @@ module scrypt_top (
     // In actual design: TSMC N3 PLL_LVT macro
     // Parameters: Fref=25MHz, Fvco=4.8GHz, Fout=1.2GHz (divide by 4)
     pll #(
-        .REF_FREQ     (25_000_000),
-        .VCO_FREQ     (4_800_000_000),
+        .REF_FREQ     (64'd25_000_000),
+        .VCO_FREQ     (64'd4_800_000_000),
         .OUT_DIV      (4),
         .SYS_DIV      (48),
         .UART_DIV     (2600)

@@ -2,12 +2,15 @@
 // Generates: core_clk (1.2 GHz), sys_clk (100 MHz), uart_clk (1.8432 MHz)
 // From 25 MHz reference crystal
 
+// Note: VCO_FREQ exceeds 2^31, so it MUST be declared with an explicit
+// 64-bit width. Unsized decimal literals default to 32 bits per IEEE 1800
+// and would otherwise silently truncate to 505,032,704.
 module pll #(
-    parameter REF_FREQ  = 25_000_000,
-    parameter VCO_FREQ  = 4_800_000_000,
-    parameter OUT_DIV   = 4,           // VCO/4 = 1.2 GHz
-    parameter SYS_DIV   = 48,          // VCO/48 = 100 MHz
-    parameter UART_DIV  = 2600         // VCO/2600 ≈ 1.846 MHz (close to 1.8432)
+    parameter longint REF_FREQ  = 64'd25_000_000,
+    parameter longint VCO_FREQ  = 64'd4_800_000_000,
+    parameter int     OUT_DIV   = 4,           // VCO/4 = 1.2 GHz
+    parameter int     SYS_DIV   = 48,          // VCO/48 = 100 MHz
+    parameter int     UART_DIV  = 2600         // VCO/2600 ~= 1.846 MHz
 ) (
     input  logic clk_ref,
     input  logic rst_n,

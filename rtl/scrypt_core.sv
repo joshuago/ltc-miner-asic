@@ -201,11 +201,13 @@ module scrypt_core (
                         sha_valid <= 1'b1;
                         sha_first <= 1'b0;
                         sha_state <= sha_hash;
+                        // Block 3 of inner HMAC: 20 data bytes (header[64..79] || INT(i))
+                        // + 0x80 pad byte at byte 20, zeros, then 64-bit length (1184 bits).
                         sha_block <= {
                             header_reg[127:0],
                             {30'd0, pd_idx + 2'd1},
-                            287'd0,
                             1'b1,
+                            287'd0,
                             64'd1184
                         };
                         fsm <= FSM_IN_B2_W;
@@ -239,7 +241,11 @@ module scrypt_core (
 
                 FSM_OUT_B1_W: begin
                     if (sha_done) begin
-                        pbkdf2_B[pd_idx*256 +: 256] <= sha_hash;
+                        // Store T[i] into pbkdf2_B converting from SHA byte order
+                        // (byte 0 at sha_hash[255:248]) to salsa20-native byte
+                        // order (byte 0 at the LSB of its 256-bit slice). This
+                        // makes pbkdf2_B feedable directly to Salsa20/BlockMix.
+                        pbkdf2_B[pd_idx*256 +: 256] <= {<<8{sha_hash}};
                         if (pd_idx == 2'd3) begin
                             header_reg[31:0] <= nonce_cur;
                             fsm <= FSM_ROMIX;
@@ -275,7 +281,10 @@ module scrypt_core (
                         sha_valid <= 1'b1;
                         sha_first <= 1'b0;
                         sha_state <= sha_hash;
-                        sha_block <= romix_out[1023 -: 512];
+                        // Second block of final inner HMAC: bytes 0..63 of B'.
+                        // Convert from salsa-native (byte 0 at romix_out[7:0])
+                        // back to SHA byte order (byte 0 at sha_block[511:504]).
+                        sha_block <= {<<8{romix_out[511:0]}};
                         fsm       <= FSM_FIN_B1_W;
                     end
                 end
@@ -285,7 +294,8 @@ module scrypt_core (
                         sha_valid <= 1'b1;
                         sha_first <= 1'b0;
                         sha_state <= sha_hash;
-                        sha_block <= romix_out[511:0];
+                        // Third block of final inner HMAC: bytes 64..127 of B'.
+                        sha_block <= {<<8{romix_out[1023:512]}};
                         fsm       <= FSM_FIN_B2_W;
                     end
                 end

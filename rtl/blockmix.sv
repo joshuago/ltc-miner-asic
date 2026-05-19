@@ -1,11 +1,21 @@
 // BlockMix(r=1) for Scrypt
-// Input:  128 bytes (B0 || B1), each 64 bytes → 16 x 32-bit words
-// Output: 128 bytes (Y0 || Y1)
-// Algorithm:
-//   Y0 = Salsa20/8(B1 ^ B0)
-//   Y1 = Salsa20/8(Y0 ^ B1)
-//   return Y0 || Y1
-// Timing: 2*(SALSA_LATENCY) + 2 cycles overhead = 20 cycles @ 9-cycle Salsa20
+// Input:  128 bytes (B0 || B1), each 64 bytes -> 16 x 32-bit words.
+// Output: 128 bytes (Y0 || Y1).
+//
+// Byte order convention (salsa20-native):
+//   - byte 0 of the 128-byte block is at data_in[7:0]
+//   - byte 127 is at data_in[1023:1016]
+//   - within each 32-bit word, bytes are LE (matching salsa20)
+//   => B[0] (bytes 0..63)   occupies bits [511:0]   (LOW half)
+//      B[1] (bytes 64..127) occupies bits [1023:512] (HIGH half)
+//
+// Algorithm (per RFC 7914):
+//   X    = B[2r-1] = B[1]
+//   Y[0] = Salsa20/8(X ^ B[0])
+//   Y[1] = Salsa20/8(Y[0] ^ B[1])
+//   output = Y[0] || Y[1]   (Y[0] in LOW half, Y[1] in HIGH half)
+//
+// Timing: 2*(SALSA_LATENCY) + 2 cycles overhead ~ 20 cycles @ 9-cycle Salsa20.
 
 module blockmix (
     input  logic         clk,
@@ -58,26 +68,30 @@ module blockmix (
             case (state)
                 IDLE: begin
                     if (start) begin
-                        input_reg  <= data_in[511:0];
-                        salsa_req  <= 1'b1;
-                        salsa_input <= data_in[1023:512] ^ data_in[511:0];  // B1 ^ B0
-                        state <= PHASE_1;
+                        // Latch B[1] (HIGH half) for use as the second salsa input.
+                        input_reg   <= data_in[1023:512];
+                        salsa_req   <= 1'b1;
+                        // First salsa input: X ^ B[0] where X = B[1].
+                        // (XOR is commutative; this is the same value as before.)
+                        salsa_input <= data_in[1023:512] ^ data_in[511:0];
+                        state       <= PHASE_1;
                     end
                 end
 
                 PHASE_1: begin
                     if (salsa_done) begin
-                        y0_reg    <= salsa_result;
-                        salsa_req <= 1'b1;
-                        salsa_input <= salsa_result ^ input_reg;  // Y0 ^ B1
-                        state <= PHASE_2;
+                        y0_reg      <= salsa_result;                // Y[0]
+                        salsa_req   <= 1'b1;
+                        salsa_input <= salsa_result ^ input_reg;    // Y[0] ^ B[1]
+                        state       <= PHASE_2;
                     end
                 end
 
                 PHASE_2: begin
                     if (salsa_done) begin
                         done     <= 1'b1;
-                        data_out <= {y0_reg, salsa_result};  // Y0 || Y1
+                        // Y[0] in LOW half, Y[1] in HIGH half (byte-stream order).
+                        data_out <= {salsa_result, y0_reg};         // {Y[1], Y[0]}
                         state    <= OUTPUT;
                     end
                 end

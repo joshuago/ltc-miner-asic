@@ -17,10 +17,10 @@ module romix (
         ST_IDLE,
         ST_P1_WRITE,       // Write X to V[iter]. Also start BlockMix.
         ST_P1_WAIT,        // Wait for BlockMix to complete.
-        ST_P1_TO_P2,       // Transition: phase 1 complete, start phase 2 read.
-        ST_P2_READ,        // Issue SRAM read for V[j].
-        ST_P2_START,       // SRAM read complete. Start BlockMix(X^V[j]).
-        ST_P2_WAIT,        // Wait for BlockMix in phase 2.
+        ST_P1_TO_P2,       // Phase 1 complete; issue first SRAM read for V[j].
+        ST_P2_READ,        // Wait one cycle for synchronous SRAM read to complete.
+        ST_P2_START,       // SRAM data is on rdata; start BlockMix(X^V[j]).
+        ST_P2_WAIT,        // Wait for BlockMix in phase 2; issue next SRAM read.
         ST_DONE            // Output ready.
     } state_t;
 
@@ -55,11 +55,20 @@ module romix (
     logic [9:0]    iter;
     logic [1023:0] x_val;
 
-    // integerify(X): low 10 bits of the first 32-bit word of B[1]
-    // B[1] occupies bits [511:0] of the 1024-bit value.
-    // Within B[1], word 0 is at bits [31:0]. Low 10 bits = bits [9:0].
-    wire [9:0] j_curr = x_val[9:0];               // j from current x_val
-    wire [9:0] j_next = bmix_out[9:0];             // j from bmix_out
+    // integerify(X): low 10 bits of word 0 of B[1], interpreted little-endian.
+    //
+    // The block X is stored in salsa20-native byte order:
+    //   - byte 0 of the 128-byte block is at bit [7:0]
+    //   - byte 127 is at bit [1023:1016]
+    //   - within each 32-bit word, bytes are LE (matching salsa20)
+    //
+    // With that layout:
+    //   - B[0] (bytes 0..63)   occupies bits [511:0]   (LOW half)
+    //   - B[1] (bytes 64..127) occupies bits [1023:512] (HIGH half)
+    //   - word 0 of B[1] (LE int of bytes 64..67) occupies bits [543:512]
+    //   - low 10 bits of integerify therefore = x_val[521:512]
+    wire [9:0] j_curr = x_val[521:512];            // j from current x_val
+    wire [9:0] j_next = bmix_out[521:512];         // j from bmix_out
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -111,16 +120,24 @@ module romix (
                 end
 
                 ST_P1_TO_P2: begin
-                    // j_curr works here because x_val was just updated
-                    // from the last phase 1 BlockMix at the start of this cycle
+                    // Issue the first phase-2 SRAM read. j_curr is valid here
+                    // because x_val was updated from the last phase-1 BlockMix
+                    // at the start of this cycle. The synchronous SRAM needs
+                    // one additional cycle (ST_P2_READ) before rdata is valid.
                     sram_cs   <= 1'b1;
                     sram_we   <= 1'b0;
                     sram_addr <= j_curr;
                     iter      <= 10'd0;
-                    st        <= ST_P2_START;
+                    st        <= ST_P2_READ;
+                end
+
+                ST_P2_READ: begin
+                    // Wait one cycle for synchronous SRAM read to populate rdata.
+                    st <= ST_P2_START;
                 end
 
                 ST_P2_START: begin
+                    // sram_rdata now holds V[j]. Start BlockMix(X ^ V[j]).
                     bmix_start <= 1'b1;
                     bmix_in    <= x_val ^ sram_rdata;
                     st <= ST_P2_WAIT;
@@ -133,12 +150,13 @@ module romix (
                             st <= ST_DONE;
                         end else begin
                             iter <= iter + 10'd1;
-                            // Use j_next (j from the new X = bmix_out)
-                            // j_next is combinational from bmix_out
+                            // Issue next SRAM read based on j from the new X.
+                            // j_next is combinational from bmix_out; go via
+                            // ST_P2_READ so sram_rdata is valid in ST_P2_START.
                             sram_cs   <= 1'b1;
                             sram_we   <= 1'b0;
                             sram_addr <= j_next;
-                            st        <= ST_P2_START;
+                            st        <= ST_P2_READ;
                         end
                     end
                 end
