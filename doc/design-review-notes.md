@@ -34,6 +34,10 @@ The following issues have been addressed:
 | -- | `scrypt_core.sv` | Syntax: `64'd(144*8)` -> `64'(144*8)` | Fixed: expression literal syntax |
 | -- | `sha256_pipelined.sv:144` | Missing `genvar r` declaration | Fixed: added `genvar r` |
 | -- | `uart.sv` | `tx_bit_cnt` / `rx_bit_cnt` declared as 4 bits but indexed an 8-bit shift register (Verilator WIDTHTRUNC warning). | Fixed: widths reduced to 3 bits. |
+| 25 | `sim/sim_main_scrypt_core.cpp` | Harness only proved FSM termination (all-ones target, no reference compare); "computes correct scrypt" was a consistency claim, not a conformance claim. | Fixed: harness now drives two LTC reference vectors (block 0 / genesis, block 31337) with `target = expected_hash + 1`, sweeps a small nonce window, and compares `found_hash` byte-for-byte against a `hashlib.scrypt`-derived reference. On failure, re-runs the winning nonce with max target so the chip's actual output is dumped next to expected for byte-level diff. |
+| 15 | `tb/scrypt_core_tb.sv`, `sim/sim_main_scrypt_core.cpp` | All-ones target made the `<` comparator and the {<<8} byte-swap (issue #26) unexercised. | Fixed in passing by #25: tight target = expected_hash + 1 (LE-integer) only passes on the exact winning hash, so every other nonce in the swept range exercises both the comparator and the byte-swap with a non-trivial reject. |
+| 41 | `scrypt_core.sv:220` | `{30'd0, pd_idx + 2'd1}` performed the add in 2-bit width, so `pd_idx == 3` wrapped: the 4th initial-PBKDF2 block hashed `header \|\| INT(0)` instead of `INT(4)`. Corrupted `T_4` (= bytes 96..127 of `B`); from there every subsequent ROMix / final-PBKDF2 byte was wrong. The all-ones target hid this. Found by the #25 conformance harness, localised via `$display` of K' / T_1..T_4 / pbkdf2_B / romix_out (T_1..T_3 matched Python, T_4 differed). | Fixed: widened the add (`({30'd0, pd_idx}) + 32'd1`) so INT(i) is computed in 32-bit width. |
+| 42 | `scrypt_core.sv:151,262` | `header_reg` was loaded verbatim from the host in `FSM_IDLE`, then `nonce_cur` was written into `header_reg[31:0]` only at `FSM_OUT_B1_W` (pd_idx == 3) -- *after* the initial PBKDF2 had already consumed `header_reg`. The post-PBKDF2 write was dead code; iteration 0 ran PBKDF2 on whatever the host placed at bytes 76..79, and `found_nonce` was reported as `nonce_cur` (= `nonce_base`) regardless of which bytes actually produced the hash. Iter 1+ worked because `FSM_NEXT` (line 381) substituted before re-entering PRE_B0. | Fixed: `FSM_IDLE` now loads `header_reg <= {header[639:32], nonce_base}` so iter 0's PBKDF2 sees the right nonce; the dead late-write was removed. `header[31:0]` is now intentionally unused at the chip's I/O boundary; lint suppressed with an explanatory comment. |
 
 ---
 
@@ -44,5 +48,5 @@ That document carries the same item numbers used above, grouped by
 category (verification, latent correctness, performance, physical
 design, cleanup, documentation) and annotated with priority.
 
-Open items as of this writing: **#9, #10, #13, #14, #15, #17, #18,
-#19, #20, #25, #32, #36, #37, #38, #39, #40**.
+Open items as of this writing: **#9, #10, #13, #14, #17, #18,
+#19, #20, #32, #36, #37, #38, #39, #40**.

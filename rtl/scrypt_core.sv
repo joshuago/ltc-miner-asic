@@ -18,7 +18,12 @@ module scrypt_core (
     input  logic         rst_n,
 
     input  logic         job_valid,
+    // header[31:0] (= wire-format nonce bytes 76..79) is intentionally ignored.
+    // The chip substitutes `nonce_base` into those bits at job load time and
+    // iterates from there; the host's value there is irrelevant.
+    /* verilator lint_off UNUSEDSIGNAL */
     input  logic [639:0] header,
+    /* verilator lint_on  UNUSEDSIGNAL */
     input  logic [255:0] target,
     input  logic [31:0]  nonce_base,
     input  logic [15:0]  nonce_range,
@@ -148,7 +153,13 @@ module scrypt_core (
                     // fire after a 0 -> 0xFFFF underflow and would cause
                     // the core to mine 65,536 nonces for a 0-range job.
                     if (job_valid && nonce_range != 16'd0) begin
-                        header_reg     <= header;
+                        // Substitute nonce_base into header bytes 76..79 so the
+                        // first iteration's PBKDF2 hashes a header with the
+                        // correct nonce. Without this override, iter 0 would
+                        // use whatever the host placed at header[31:0] -- which
+                        // is irrelevant once nonce iteration begins -- and the
+                        // reported `found_nonce` would not match the hash.
+                        header_reg     <= {header[639:32], nonce_base};
                         target_reg     <= target;
                         nonce_cur      <= nonce_base;
                         nonce_left     <= nonce_range;
@@ -215,9 +226,13 @@ module scrypt_core (
                         sha_state <= sha_hash;
                         // Block 3 of inner HMAC: 20 data bytes (header[64..79] || INT(i))
                         // + 0x80 pad byte at byte 20, zeros, then 64-bit length (1184 bits).
+                        // INT(i) = i as a 32-bit big-endian integer (PBKDF2, RFC 2898).
+                        // The add must be performed in 32-bit width, not 2-bit -- otherwise
+                        // pd_idx == 3 wraps to INT(0) instead of INT(4) and the 4th
+                        // PBKDF2 block is computed against the wrong salt.
                         sha_block <= {
                             header_reg[127:0],
-                            {30'd0, pd_idx + 2'd1},
+                            ({30'd0, pd_idx}) + 32'd1,
                             1'b1,
                             287'd0,
                             64'd1184
@@ -259,7 +274,6 @@ module scrypt_core (
                         // makes pbkdf2_B feedable directly to Salsa20/BlockMix.
                         pbkdf2_B[pd_idx*256 +: 256] <= {<<8{sha_hash}};
                         if (pd_idx == 2'd3) begin
-                            header_reg[31:0] <= nonce_cur;
                             fsm <= FSM_ROMIX;
                         end else begin
                             pd_idx <= pd_idx + 2'd1;

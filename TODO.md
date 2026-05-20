@@ -14,30 +14,6 @@ Status legend:
 
 ## Verification
 
-### #25  Verify against reference scrypt vectors -- *blocking*
-
-The byte-order conventions chosen in fixes #21-#23 (salsa20-native inside
-`pbkdf2_B` / `romix_*`, `{<<8{...}}` at the PBKDF2 boundaries) are
-internally consistent and match how `libscrypt` and cgminer's `scrypt.c`
-lay out memory, but the chip has not been compared end-to-end against a
-reference implementation for any single input. The C++ harness
-(`sim/sim_main_scrypt_core.cpp`) still uses an all-ones target, so it
-only proves the FSM terminates -- not that the hash is right.
-
-Recommended approach:
-
-1. Pick a known vector. Litecoin block 0 (genesis) is fixed and small,
-   or capture one with `cgminer --debug` against a testnet pool.
-2. Extend the harness to feed the header bytes in, run mining with a
-   tight target equal to the expected hash, and compare `found_hash`
-   byte-for-byte against the reference.
-3. If it doesn't match, the most likely remaining issue is the
-   within-word endian conversion at the PBKDF2 boundaries -- swap the
-   convention there and re-run.
-
-Until this exists, "the chip computes correct scrypt" is a *consistency*
-claim, not a *conformance* claim.
-
 ### #14  Salsa20/8 testbench has no real vectors -- *latent*
 
 `tb/salsa20_tb.sv` and `sim/sim_main_salsa20.cpp` only check the trivial
@@ -46,12 +22,9 @@ without comparing it). Replace with eSTREAM or Bernstein-reference
 vectors so the pipeline can fail loudly if the quarter-round, the
 round-permutation tables, or the feedforward addition regress.
 
-### #15  Scrypt core testbench uses a non-discriminating target -- *latent*
-
-Both `tb/scrypt_core_tb.sv:103` and the C++ harness set the target to
-all-ones, so any hash passes and the `<` comparator (and the byte-swap
-added in #26) is never exercised. Will be addressed naturally as part of
-#25 if the tight-target approach above is used.
+The scrypt_core conformance harness (#25, FIXED) is a useful pattern
+to mirror here: drive a known input, compare byte-for-byte against a
+reference computed offline, dump a hex diff on mismatch.
 
 ---
 
