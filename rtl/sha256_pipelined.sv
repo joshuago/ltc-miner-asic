@@ -99,6 +99,7 @@ module sha256_pipelined (
     logic [N_ROUNDS:0][31:0] A, B, C, D, E, F, G, H_state;
     logic [N_ROUNDS:0] valid_pipe;
     logic [N_ROUNDS:0][255:0] chain_state_pipe;
+    logic [N_ROUNDS:0] first_block_pipe;
 
     // Stage -1 / input registration: compute initial state
     // Initial state comes from either IV (first_block) or chaining (state_in)
@@ -120,10 +121,12 @@ module sha256_pipelined (
             E[0] <= '0; F[0] <= '0; G[0] <= '0; H_state[0] <= '0;
             valid_pipe[0] <= 1'b0;
             chain_state_pipe[0] <= '0;
+            first_block_pipe[0] <= 1'b0;
             for (int j = 0; j < 16; j++) W_pipe[0][j] <= '0;
         end else begin
             valid_pipe[0] <= valid_in;
             chain_state_pipe[0] <= state_in;
+            first_block_pipe[0] <= first_block;
             if (valid_in) begin
                 A[0] <= init_a;          B[0] <= init_b;
                 C[0] <= init_c;          D[0] <= init_d;
@@ -169,11 +172,13 @@ module sha256_pipelined (
                     G[NEXT] <= '0; H_state[NEXT] <= '0;
                     valid_pipe[NEXT] <= 1'b0;
                     chain_state_pipe[NEXT] <= '0;
+                    first_block_pipe[NEXT] <= 1'b0;
                     if (NEXT < N_ROUNDS)
                         for (int j = 0; j < 64; j++) W_pipe[NEXT][j] <= '0;
                 end else begin
                     valid_pipe[NEXT] <= valid_pipe[r];
                     chain_state_pipe[NEXT] <= chain_state_pipe[r];
+                    first_block_pipe[NEXT] <= first_block_pipe[r];
                     if (valid_pipe[r]) begin
                         A[NEXT]        <= t1 + t2;
                         B[NEXT]        <= A[r];
@@ -221,14 +226,15 @@ module sha256_pipelined (
 
     // Output: for first_block, add IV; for subsequent blocks, add chain input state
     wire [31:0] out_h0, out_h1, out_h2, out_h3, out_h4, out_h5, out_h6, out_h7;
-    assign out_h0 = result_a + (first_block ? H0_INIT : chain_h0);
-    assign out_h1 = result_b + (first_block ? H1_INIT : chain_h1);
-    assign out_h2 = result_c + (first_block ? H2_INIT : chain_h2);
-    assign out_h3 = result_d + (first_block ? H3_INIT : chain_h3);
-    assign out_h4 = result_e + (first_block ? H4_INIT : chain_h4);
-    assign out_h5 = result_f + (first_block ? H5_INIT : chain_h5);
-    assign out_h6 = result_g + (first_block ? H6_INIT : chain_h6);
-    assign out_h7 = result_h + (first_block ? H7_INIT : chain_h7);
+    wire first_block_out = first_block_pipe[N_ROUNDS];
+    assign out_h0 = result_a + (first_block_out ? H0_INIT : chain_h0);
+    assign out_h1 = result_b + (first_block_out ? H1_INIT : chain_h1);
+    assign out_h2 = result_c + (first_block_out ? H2_INIT : chain_h2);
+    assign out_h3 = result_d + (first_block_out ? H3_INIT : chain_h3);
+    assign out_h4 = result_e + (first_block_out ? H4_INIT : chain_h4);
+    assign out_h5 = result_f + (first_block_out ? H5_INIT : chain_h5);
+    assign out_h6 = result_g + (first_block_out ? H6_INIT : chain_h6);
+    assign out_h7 = result_h + (first_block_out ? H7_INIT : chain_h7);
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
